@@ -135,6 +135,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.conda
 
 # Spyder project settings
 .spyderproject
@@ -175,3 +176,9 @@ cython_debug/
 
 # PyTorch model weights
 *.pth
+
+# Experimenting with DSAD Samples
+processDSADSamples
+test_DSAD.py
+notes.md
+results

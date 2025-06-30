@@ -19,8 +19,8 @@ from torch.utils.data import Dataset, ConcatDataset, DataLoader, Subset, random_
 
 from DMBMSNet import DMBMSNet
 from DresdenDataset import DresdenDataset
-from HemoSetDataset import HemoSetDataset
-from CholecSeg8kDataset import CholecSeg8kDataset
+# from HemoSetDataset import HemoSetDataset
+# from CholecSeg8kDataset import CholecSeg8kDataset
 
 torch.manual_seed(1)
 cudnn.benchmark = True
@@ -51,7 +51,7 @@ def parse_args():
     parser.add_argument("--epochs",             type = int,  default = 40,    help = "Maximum number of epochs (if no early stopping activated).")
     parser.add_argument("--lr",                 type = float,default = 0.0001,help = "Maximum learning rate.")
     parser.add_argument("--patience",           type = int,  default = 3,     help = "Number of epochs withoput improvement to wait before early stopping.")
-    parser.add_argument("--device",             type = str,  default = "cuda",help = "Device to run the training on.")
+    parser.add_argument("--device",             type = str,  default = "xpu",help = "Device to run the training on.")
 
 
 
@@ -142,7 +142,7 @@ def train_model(
     num_epochs = 20,
     lr = 1e-5,
     patience = 4,
-    device = "cuda"
+    device = "xpu"
 ):
     
     model = model.to(device)
@@ -202,7 +202,7 @@ def train_model(
             total_loss += loss.item()
 
             del current_frame, current_mask, memory_frames, memory_masks, prediction, loss
-            torch.cuda.empty_cache()
+            torch.xpu.empty_cache()
 
         avg_train_loss = total_loss / len(train_loader)
         train_loss_history.append(avg_train_loss)
@@ -233,7 +233,7 @@ def train_model(
                 val_loss += loss.item()
 
                 del current_frame, current_mask, memory_frames, memory_masks, prediction, loss
-                torch.cuda.empty_cache()
+                torch.xpu.empty_cache()
 
         if nan_detected:
             break
@@ -269,14 +269,14 @@ def train_model(
         model.load_state_dict(best_model_state)
         print("✅ Best model reloaded !")
 
-        #plt.figure()
-        #plt.plot(range(1, len(train_loss_history)+1), train_loss_history, label = "Training Loss")
-        #plt.plot(range(1, len(val_loss_history)+1),   val_loss_history,   label = "Validation Loss")
-        #plt.xlabel("Epoch")
-        #plt.ylabel("Loss")
-        #plt.title("Évolution de la Training et Validation Loss")
-        #plt.legend()
-        #plt.show()
+        plt.figure()
+        plt.plot(range(1, len(train_loss_history)+1), train_loss_history, label = "Training Loss")
+        plt.plot(range(1, len(val_loss_history)+1),   val_loss_history,   label = "Validation Loss")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("Évolution de la Training et Validation Loss")
+        plt.legend()
+        plt.show()
 
         model.eval()
 
@@ -324,7 +324,7 @@ def train_model(
                 hd95s.append(sum(batch_hd95) / len(batch_hd95))
 
                 del current_frame, current_mask, memory_frames, memory_masks, prediction, loss
-                torch.cuda.empty_cache()
+                torch.xpu.empty_cache()
 
         avg_test_loss = test_loss / len(test_loader)
         avg_accuracy = np.mean(accuracies)
@@ -359,13 +359,13 @@ if __name__ == '__main__':
     use_crf            = True #args.use_crf
 
     # Training arguments
-    data_dir           = r"D:\archive\Dresden Dataset\dresden_tensors" #args.data_dir
+    data_dir           = r"D:/College/Research/SLU/laparoscopic surgery/Dataset/DSAD/multilabel" #args.data_dir
     augmentation       = False #args.augmentation
     batch_size         = 2 #args.batch_size
     epochs             = 1000 #args.epochs
     lr                 = 1e-5 #args.lr
     patience           = 6 #args.patience
-    device             = "cuda" #args.device
+    device             = "xpu" #args.device
 
     # Dresden Dataset
 
@@ -392,8 +392,7 @@ if __name__ == '__main__':
             files = seq[0]
         else:
             files = seq
-        # On récupère l’ID vidéo depuis le nom du premier fichier de la séquence
-        video_id = int(os.path.basename(files[0]).split('_')[0])
+        video_id = files[0]["surgery_id"]
         if video_id in train_vids_1:
             train_indices_1.append(idx)
         elif video_id in val_vids_1:
@@ -407,79 +406,79 @@ if __name__ == '__main__':
 
     # HemoSet Dataset
 
-    dataset_2 = HemoSetDataset(
-        data_dir = r"D:\HemoSet\hemoset_tensors",
-        history_length = memory_length,
-        augment = augmentation
-    )
+    # dataset_2 = HemoSetDataset(
+    #     data_dir = r"D:\HemoSet\hemoset_tensors",
+    #     history_length = memory_length,
+    #     augment = augmentation
+    # )
 
-    train_vids_2 = {1, 2, 3, 4, 5, 6}
-    val_vids_2 = {7, 9}
-    test_vids_2 = {10, 11}
-    #train_vids_2 = {1, 2, 3, 4, 5}
-    #val_vids_2 = {10, 11}
-    #test_vids_2 = {}
+    # train_vids_2 = {1, 2, 3, 4, 5, 6}
+    # val_vids_2 = {7, 9}
+    # test_vids_2 = {10, 11}
+    # #train_vids_2 = {1, 2, 3, 4, 5}
+    # #val_vids_2 = {10, 11}
+    # #test_vids_2 = {}
 
-    train_indices_2 = []
-    val_indices_2   = []
-    test_indices_2  = []
+    # train_indices_2 = []
+    # val_indices_2   = []
+    # test_indices_2  = []
 
-    for idx, seq in enumerate(dataset_2.sequences):
-        # Chaque séquence est soit une liste de fichiers, soit un tuple (liste de fichiers, type d'augmentation)
-        if isinstance(seq, tuple):
-            files = seq[0]
-        else:
-            files = seq
-        # On récupère l’ID vidéo depuis le nom du premier fichier de la séquence
-        video_id = int(os.path.basename(files[0]).split('_')[0])
-        if video_id in train_vids_2:
-            train_indices_2.append(idx)
-        elif video_id in val_vids_2:
-            val_indices_2.append(idx)
-        elif video_id in test_vids_2:
-            test_indices_2.append(idx)
+    # for idx, seq in enumerate(dataset_2.sequences):
+    #     # Chaque séquence est soit une liste de fichiers, soit un tuple (liste de fichiers, type d'augmentation)
+    #     if isinstance(seq, tuple):
+    #         files = seq[0]
+    #     else:
+    #         files = seq
+    #     # On récupère l’ID vidéo depuis le nom du premier fichier de la séquence
+    #     video_id = int(os.path.basename(files[0]).split('_')[0])
+    #     if video_id in train_vids_2:
+    #         train_indices_2.append(idx)
+    #     elif video_id in val_vids_2:
+    #         val_indices_2.append(idx)
+    #     elif video_id in test_vids_2:
+    #         test_indices_2.append(idx)
 
-    train_set_2 = Subset(dataset_2, train_indices_2)
-    val_set_2   = Subset(dataset_2, val_indices_2)
-    test_set_2  = Subset(dataset_2, test_indices_2)
+    # train_set_2 = Subset(dataset_2, train_indices_2)
+    # val_set_2   = Subset(dataset_2, val_indices_2)
+    # test_set_2  = Subset(dataset_2, test_indices_2)
 
     # CholecSeg8k Dataset
 
-    dataset_3 = CholecSeg8kDataset(
-        data_dir = r"D:\CholecSeg8k\cholecseg8k_tensors",
-        history_length = memory_length,
-        augment = augmentation
-    )
+    # dataset_3 = CholecSeg8kDataset(
+    #     data_dir = r"D:\CholecSeg8k\cholecseg8k_tensors",
+    #     history_length = memory_length,
+    #     augment = augmentation
+    # )
 
-    train_vids_3 = {1, 9, 12, 17, 18, 20, 24, 25, 26, 27, 28}
-    val_vids_3 = {35, 37, 43}
-    test_vids_3 = {48, 52, 55}
-    #train_vids_3 = {}
-    #val_vids_3 = {}
-    #test_vids_3 = {1, 9, 12, 17, 18, 20, 24, 25, 26, 27, 28, 35, 37, 43, 48, 52, 55}
+    # train_vids_3 = {1, 9, 12, 17, 18, 20, 24, 25, 26, 27, 28}
+    # val_vids_3 = {35, 37, 43}
+    # test_vids_3 = {48, 52, 55}
+    # #train_vids_3 = {}
+    # #val_vids_3 = {}
+    # #test_vids_3 = {1, 9, 12, 17, 18, 20, 24, 25, 26, 27, 28, 35, 37, 43, 48, 52, 55}
 
-    train_indices_3 = []
-    val_indices_3   = []
-    test_indices_3  = []
+    # train_indices_3 = []
+    # val_indices_3   = []
+    # test_indices_3  = []
 
-    for idx, seq in enumerate(dataset_3.sequences):
-        # Chaque séquence est soit une liste de fichiers, soit un tuple (liste de fichiers, type d'augmentation)
-        if isinstance(seq, tuple):
-            files = seq[0]
-        else:
-            files = seq
-        # On récupère l’ID vidéo depuis le nom du premier fichier de la séquence
-        video_id = int(os.path.basename(files[0]).split('_')[0])
-        if video_id in train_vids_3:
-            train_indices_3.append(idx)
-        elif video_id in val_vids_3:
-            val_indices_3.append(idx)
-        elif video_id in test_vids_3:
-            test_indices_3.append(idx)
+    # for idx, seq in enumerate(dataset_3.sequences):
+    #     # Chaque séquence est soit une liste de fichiers, soit un tuple (liste de fichiers, type d'augmentation)
+    #     if isinstance(seq, tuple):
+    #         files = seq[0]
+    #     else:
+    #         files = seq
+    #     # On récupère l’ID vidéo depuis le nom du premier fichier de la séquence
+    #     video_id = int(os.path.basename(files[0]).split('_')[0])
+    #     if video_id in train_vids_3:
+    #         train_indices_3.append(idx)
+    #     elif video_id in val_vids_3:
+    #         val_indices_3.append(idx)
+    #     elif video_id in test_vids_3:
+    #         test_indices_3.append(idx)
 
-    train_set_3 = Subset(dataset_3, train_indices_3)
-    val_set_3   = Subset(dataset_3, val_indices_3)
-    test_set_3  = Subset(dataset_3, test_indices_3)
+    # train_set_3 = Subset(dataset_3, train_indices_3)
+    # val_set_3   = Subset(dataset_3, val_indices_3)
+    # test_set_3  = Subset(dataset_3, test_indices_3)
 
     #
 
@@ -492,6 +491,7 @@ if __name__ == '__main__':
     val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=True, num_workers=4)
     test_loader  = DataLoader(test_set,  batch_size=batch_size, shuffle=True, num_workers=4)
 
+    # Model Initialization
     model = DMBMSNet(
         input_dim          = 3,
         num_classes        = num_classes,

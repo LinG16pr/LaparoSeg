@@ -1,1 +1,6 @@
 torch
+torchvision
+scipy
+matplotlib
+pandas
+opencv-python
