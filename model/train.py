@@ -19,12 +19,18 @@ from torch.utils.data import Dataset, ConcatDataset, DataLoader, Subset, random_
 
 from DMBMSNet import DMBMSNet
 from DresdenDataset import DresdenDataset
-# from HemoSetDataset import HemoSetDataset
+from HemoSetDataset import HemoSetDataset
 # from CholecSeg8kDataset import CholecSeg8kDataset
 
 torch.manual_seed(1)
 cudnn.benchmark = True
 warnings.simplefilter("ignore", category=FutureWarning)
+
+def clear_torch_cache():
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    elif torch.xpu.is_available():
+        torch.xpu.empty_cache()
 
 def parse_args():
 
@@ -51,7 +57,7 @@ def parse_args():
     parser.add_argument("--epochs",             type = int,  default = 40,    help = "Maximum number of epochs (if no early stopping activated).")
     parser.add_argument("--lr",                 type = float,default = 0.0001,help = "Maximum learning rate.")
     parser.add_argument("--patience",           type = int,  default = 3,     help = "Number of epochs withoput improvement to wait before early stopping.")
-    parser.add_argument("--device",             type = str,  default = "xpu",help = "Device to run the training on.")
+    parser.add_argument("--device",             type = str,  default = "cuda",help = "Device to run the training on.")
 
 
 
@@ -142,7 +148,7 @@ def train_model(
     num_epochs = 20,
     lr = 1e-5,
     patience = 4,
-    device = "xpu"
+    device = "cuda" if torch.cuda.is_available() else ("xpu" if torch.xpu.is_available() else "cpu")
 ):
     
     model = model.to(device)
@@ -166,11 +172,27 @@ def train_model(
     best_model_state = None
     nan_detected = False
 
+    start_epoch = 0
+    resume_Training = False
+    checkpoint_path = "D:/College/Research/SLU/laparoscopic surgery/LaparoSeg/latest_checkpoint.pth"
+    epochs_counter = 0
     train_loss_history = []
     val_loss_history = []
-
-    epochs_counter = 0
-    for epoch in range(num_epochs):
+    if resume_Training:
+        try:
+            checkpoint = torch.load(checkpoint_path)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            avg_test_loss = checkpoint['val_loss']
+            start_epoch = checkpoint['epoch'] + 1
+            epochs_counter = checkpoint['epoch'] + 1
+            train_loss_history = checkpoint.get('train_loss_history', [])
+            val_loss_history = checkpoint.get('val_loss_history', [])
+            print(f"✅ Loaded latest checkpoint from epoch {start_epoch-1}, val_loss={avg_test_loss:.4f}")
+        except Exception as e:
+            print(f"⚠️ Cannot load checkpoint: {e}, training from scratch")
+            
+    for epoch in range(start_epoch, num_epochs):
         epochs_counter += 1
         model.train()
         total_loss = 0
@@ -178,6 +200,7 @@ def train_model(
 
         for images, masks in train_loader:
             images_counter += 1
+    
             images = [img.squeeze(1).to(device) for img in images]
             masks  = [mask.squeeze(1).to(device) for mask in masks]
             optimizer.zero_grad()
@@ -187,22 +210,27 @@ def train_model(
             memory_frames = images[:-1]
             memory_masks  = masks[:-1]
 
-            prediction = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
-            loss = criterion(prediction, current_mask.argmax(dim=1).long())
-            print(f"[{epochs_counter}/{num_epochs}] [{images_counter}/{len(train_loader)}] Training loss: {loss}")
+            try:
+                prediction = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
+                loss = criterion(prediction, current_mask.argmax(dim=1).long())
+                print(f"[{epochs_counter}/{num_epochs}] [{images_counter}/{len(train_loader)}] Training loss: {loss}")
 
-            if torch.isnan(loss).any():
-                print(f"⚠️ NaN loss detected during training at epoch n°{epoch+1}, batch n°{images_counter}.")
-                nan_detected = True
-                break
+                if torch.isnan(loss).any():
+                    print(f"⚠️ NaN loss detected during training at epoch n°{epoch+1}, batch n°{images_counter}.")
+                    nan_detected = True
+                    break
 
-            loss.backward()
-            optimizer.step()
-            #scheduler.step()
-            total_loss += loss.item()
+                loss.backward()
+                optimizer.step()
+                #scheduler.step()
+                total_loss += loss.item()
+            except RuntimeError as e:
+                print(f"⚠️ RuntimeError occured at {epoch+1}, batch {images_counter}. Attempting to recover...")
+                clear_torch_cache()
+                raise e
 
             del current_frame, current_mask, memory_frames, memory_masks, prediction, loss
-            torch.xpu.empty_cache()
+            clear_torch_cache()
 
         avg_train_loss = total_loss / len(train_loader)
         train_loss_history.append(avg_train_loss)
@@ -221,19 +249,24 @@ def train_model(
                 memory_frames = images[:-1]
                 memory_masks  = masks[:-1]
 
-                prediction = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
-                loss = criterion(prediction, current_mask.argmax(dim=1).long())
-                print(f"[{epochs_counter}/{num_epochs}] [{images_counter}/{len(val_loader)}] Validation loss: {loss}")
+                try:
+                    prediction = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
+                    loss = criterion(prediction, current_mask.argmax(dim=1).long())
+                    print(f"[{epochs_counter}/{num_epochs}] [{images_counter}/{len(val_loader)}] Validation loss: {loss}")
 
-                if torch.isnan(loss).any():
-                    print(f"⚠️ NaN loss detected during validation at epoch n°{epoch+1}, batch n°{images_counter}.")
-                    nan_detected = True
-                    break
+                    if torch.isnan(loss).any():
+                        print(f"⚠️ NaN loss detected during validation at epoch n°{epoch+1}, batch n°{images_counter}.")
+                        nan_detected = True
+                        break
 
-                val_loss += loss.item()
+                    val_loss += loss.item()
+                except RuntimeError as e:
+                    print(f"⚠️ RuntimeError occured at {epoch+1}, batch {images_counter}. Attempting to recover...")
+                    clear_torch_cache()
+                    continue
 
                 del current_frame, current_mask, memory_frames, memory_masks, prediction, loss
-                torch.xpu.empty_cache()
+                clear_torch_cache()
 
         if nan_detected:
             break
@@ -245,6 +278,15 @@ def train_model(
         print("------------------------------")
 
         scheduler.step(avg_val_loss)
+
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "val_loss": avg_val_loss,
+            "train_loss_history": train_loss_history,
+            "val_loss_history": val_loss_history
+        }, "latest_checkpoint.pth")
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
@@ -324,7 +366,7 @@ def train_model(
                 hd95s.append(sum(batch_hd95) / len(batch_hd95))
 
                 del current_frame, current_mask, memory_frames, memory_masks, prediction, loss
-                torch.xpu.empty_cache()
+                clear_torch_cache()
 
         avg_test_loss = test_loss / len(test_loader)
         avg_accuracy = np.mean(accuracies)
@@ -353,19 +395,19 @@ if __name__ == '__main__':
     num_encoder_blocks = 5 #args.num_encoder_blocks
     num_heads          = 8 #args.num_heads
     k                  = 5 #args.k
-    memory_length      = 4 #args.memory_length
+    memory_length      = 0 #args.memory_length
     num_memory_blocks  = 4 #args.num_memory_blocks
     deformable         = True #args.deformable
     use_crf            = True #args.use_crf
 
     # Training arguments
-    data_dir           = r"D:/College/Research/SLU/laparoscopic surgery/Dataset/DSAD/multilabel" #args.data_dir
+    data_dir           = r"D:\College\Research\SLU\laparoscopic surgery\Dataset\DSAD\multilabel" #args.data_dir
     augmentation       = False #args.augmentation
     batch_size         = 2 #args.batch_size
     epochs             = 1000 #args.epochs
     lr                 = 1e-5 #args.lr
     patience           = 6 #args.patience
-    device             = "xpu" #args.device
+    device             = "cuda" if torch.cuda.is_available() else ("xpu" if torch.xpu.is_available() else "cpu") #args.device
 
     # Dresden Dataset
 
@@ -407,7 +449,7 @@ if __name__ == '__main__':
     # HemoSet Dataset
 
     # dataset_2 = HemoSetDataset(
-    #     data_dir = r"D:\HemoSet\hemoset_tensors",
+    #     data_dir = r"D:\College\Research\SLU\laparoscopic surgery\Dataset\HemoSet",
     #     history_length = memory_length,
     #     augment = augmentation
     # )
@@ -429,8 +471,7 @@ if __name__ == '__main__':
     #         files = seq[0]
     #     else:
     #         files = seq
-    #     # On récupère l’ID vidéo depuis le nom du premier fichier de la séquence
-    #     video_id = int(os.path.basename(files[0]).split('_')[0])
+    #     video_id = files[0]["pig_id"]
     #     if video_id in train_vids_2:
     #         train_indices_2.append(idx)
     #     elif video_id in val_vids_2:

@@ -142,15 +142,22 @@ class DMBMSNet(nn.Module):
 
         predicted_masks = self.mask_decoder(memory_attention_output, skip_connections) # Shape: (batch_size, num_classes, height, width)
 
+        # Initialize pre_crf_masks for return when CRF is not used
+        pre_crf_masks = predicted_masks
+
         # STEP 9: Pass through HierarchicalCRF
 
         if self.use_crf:
-            predicted_masks = self.hierarchical_dense_crf(predicted_masks, x, skip_connections, True)
+            post_crf_masks = self.hierarchical_dense_crf(predicted_masks, x, skip_connections, True)
+        else:
+            post_crf_masks = predicted_masks
 
         # STEP 10: Pass through MemoryEncoder + Update MemoryBank
 
         if not training:
-            new_memory = self.memory_encoder(predicted_masks, encoder_output)
+            new_memory = self.memory_encoder(post_crf_masks, encoder_output)
             self.memory_bank.add(new_memory)
 
-        return predicted_masks
+        if self.use_crf:
+            return pre_crf_masks, post_crf_masks
+        return post_crf_masks
