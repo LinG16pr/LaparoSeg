@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 
 
 
-class DresdenDataset(Dataset):
+class HemoSetDataset(Dataset):
 
     def __init__(
         self,
@@ -22,8 +22,7 @@ class DresdenDataset(Dataset):
         img_size=(80, 80)
     ):
         """
-        Initializes the Dresden Surgical Anatomy Dataset (DSAD) from a given
-        path to DSAD's multilabel dataset folder. 
+        Initializes the HemoSet Dataset from a given path to HemoSet's folder. 
 
         :param str data_dir: Root directory of the multilabel dataset folder. 
                              Both image and mask are in .png format.
@@ -39,16 +38,6 @@ class DresdenDataset(Dataset):
         self.history_length = history_length
         self.augment = augment
         self.img_size = img_size
-        self.TARGET_ORGANS = [
-            "abdominal_wall",
-            "colon",
-            "liver",
-            "pancreas",
-            "small_intestine",
-            "spleen",
-            "stomach"
-            # Background as the 8th channel
-        ]
         self.transform = transforms.Compose([
             transforms.Resize(img_size),
             transforms.ToTensor()
@@ -59,74 +48,65 @@ class DresdenDataset(Dataset):
 
     def _organize_files(self):
         """
-        Organize input files (image and mask) based on the structure of DSAD. 
+        Organize input files (image and mask) based on the structure of HemoSet 
 
-        DSAD Multilabel folder Structure:
-        multilabel/                  # Passed to this class as data_dir
-        ├── 02/                      # Surgery ID 02
-        │   ├── image00.png          # Original Image
-        │   ├── mask00_abdominal_wall.png  # Abdominal Wall Mask
-        │   ├── mask00_colon.png           # Colon Mask
-        │   ├── ...                  # Other organ masks (<=11 in total)
-        │   ├── image01.png
-        │   ├── mask01_abdominal_wall.png
-        │   ├── ...
-        │   └── weak_labels.csv      # Week label
-        ├── 03/                      # Surgery ID 03
-        │   ├── image00.png
-        │   ├── mask00_abdominal_wall.png
-        │   ├── ...
-        └── ...                      # Other Surgery folders (02-31)
+        HemoSet folder structure:
+        HemoSet/
+        ├── pig1/
+        │   ├── imgs/
+        │   │   ├── 000000.png
+        │   │   ├── 000030.png
+        │   │   └── ...
+        │   └── labels/
+        │       ├── 000000_mask.png
+        │       ├── 000030_mask.png
+        │       └── ...
+        ├── pig2/
+        │   ├── imgs/
+        │   └── labels/
+        └── ...
 
-        :return: Dict with key as surgery_id, value as a list of frame info
+        :return: Dict with key as pig_id, value as a list of frame info
                  Every frame_info is a dict with the following information:
                  {
-                    'image_path': 'path/to/imageXX.png',
-                    'mask_paths': ['path/to/maskXX_organ1.png', ...],
-                    'missing_organs': ['colon', 'liver', ...],
-                    'surgery_id': 'surgery_id'
+                    'image_path': 'path/to/XXXXXX.png',
+                    'mask_path': 'path/to/XXXXXX_mask.png',
+                    'pig_id': pig_id
                  }
         """
 
         video_dict = {}
 
-        surgery_folders = glob.glob(os.path.join(self.data_dir, "*"))
-        surgery_folders = [f for f in surgery_folders if os.path.isdir(f)]
+        pig_folders = glob.glob(os.path.join(self.data_dir, "pig*"))
+        pig_folders = [f for f in pig_folders if os.path.isdir(f)]
 
-        for surgery_folder in surgery_folders:
-            surgery_id = int(os.path.basename(surgery_folder))
+        for pig_folder in pig_folders:
+            pig_id = int(os.path.basename(pig_folder)[3:])
+
+            img_folder = os.path.join(pig_folder, "imgs")
+            label_folder = os.path.join(pig_folder, "labels")
 
             # Load images as a list of strings, then sort by frame number
-            image_files = glob.glob(os.path.join(surgery_folder, "image*.png"))
-            image_files.sort(key=lambda x: int(os.path.basename(x)[5:-4]))
-
+            image_files = glob.glob(os.path.join(img_folder, "*.png"))
+            image_files = [f for f in image_files]
+            image_files.sort(
+                key=lambda x: int(os.path.basename(x).split(".")[0])
+            )
+            
             # Collect masks for each image
-            frame_dict = {}
+            frame_list = []
             for image_file in image_files:
-                frame_num = os.path.basename(image_file)[5:-4]
+                frame_num = os.path.basename(image_file).split(".")[0]
+                mask_file = os.path.join(label_folder, f"{frame_num}_mask.png")
 
-                # Collect masks by target channel order
-                mask_files = []
-                missing_organs = []
-                for organ in self.TARGET_ORGANS:
-                    organ_mask_file = os.path.join(surgery_folder, f"mask{frame_num}_{organ}.png")
-                    if os.path.exists(organ_mask_file):
-                        mask_files.append(organ_mask_file)
-                    else:
-                        missing_organs.append(organ)
-
-                frame_dict[int(frame_num)] = {
+                frame_info = {
                     "image_path": image_file,
-                    "mask_paths": mask_files,
-                    "missing_organs": missing_organs,
-                    "surgery_id": surgery_id
+                    "mask_path": mask_file,
+                    "pig_id": pig_id
                 }
+                frame_list.append(frame_info)
 
-            if surgery_id not in video_dict:
-                video_dict[surgery_id] = []
-
-            sorted_frames = sorted(frame_dict.items(), key=lambda x: x[0])
-            video_dict[surgery_id] = [item[1] for item in sorted_frames]
+            video_dict[pig_id] = frame_list
 
         return video_dict
 
@@ -137,7 +117,7 @@ class DresdenDataset(Dataset):
         sequences = []
 
         for frame_info in self.video_frames.values():
-            # Eliminate surgeries with frames less than history_length
+            # Eliminate pigs with frames less than history_length
             if len(frame_info) < self.history_length + 1:
                 continue
 
@@ -189,27 +169,18 @@ class DresdenDataset(Dataset):
         mask[7] = 1.0 - torch.clamp(organs_sum, 0, 1)
         return mask
 
-    def _load_masks(self, mask_paths, missing_organs):
+    def _load_masks(self, mask_path):
         """
-        Load a single frame's masks. Set to zero matrix for organs whose masks
-        do not exist. Dynamically generates a background as the 8th channel.
+        Load a single binary mask
+        #000000 (background) and #800000 (blood)
         """
-        h, w = self.img_size
-        full_mask = np.zeros((8, h, w), dtype=np.float32)
-
-        for i, organ in enumerate(self.TARGET_ORGANS):
-            if organ not in missing_organs:
-                mask_path = next(p for p in mask_paths if f"_{organ}.png" in p)
-                mask = Image.open(mask_path).convert("L")
-                mask = np.array(mask.resize((w, h), resample=Image.Resampling.NEAREST))
-                mask = mask.astype(np.float32)
-                full_mask[i] = mask
-
-        organs_sum = np.sum(full_mask[:7], axis=0)
-        full_mask[7] = 1.0 - np.clip(organs_sum, 0, 1)
-
-        assert full_mask.shape[0] == 8, \
-        f"Mask channel number not 8, actual number: {full_mask.shape[0]}"
+        mask = np.array(Image.open(mask_path).convert("RGB"))
+    
+        blood_mask = (mask[..., 0] > 110) & (mask[..., 1] == 0) & \
+                 (mask[..., 2] == 0)
+        full_mask = np.zeros((2, *mask.shape[:2]), dtype=np.float32)
+        full_mask[0] = blood_mask.astype(np.float32)
+        full_mask[1] = 1.0 - full_mask[0]
 
         return torch.from_numpy(full_mask)
 
@@ -239,15 +210,12 @@ class DresdenDataset(Dataset):
             img = Image.open(frame_info["image_path"]).convert("RGB")
             img = self.transform(img)
 
-            mask = self._load_masks(
-                mask_paths=frame_info["mask_paths"],
-                missing_organs=frame_info.get("missing_organs", [])
-            )
+            mask = self._load_masks(frame_info["mask_path"])
             mask = TF.resize(mask, self.img_size)
 
             frames.append(img)
             masks.append(mask)
-
+        
         if augmentation_type:
             frames, masks = self._apply_augmentation(
                 frames,
@@ -255,4 +223,5 @@ class DresdenDataset(Dataset):
                 augmentation_type
             )
 
+        assert masks[0].shape[0] == 2, f"Mask should be 2-channel, got {masks[0].shape}"
         return frames, masks

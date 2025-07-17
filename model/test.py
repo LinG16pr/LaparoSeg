@@ -13,7 +13,7 @@ from torch.utils.data import Dataset, ConcatDataset, DataLoader, Subset, random_
 
 from DMBMSNet import DMBMSNet
 from DresdenDataset import DresdenDataset
-# from HemoSetDataset import HemoSetDataset
+from HemoSetDataset import HemoSetDataset
 # from CholecSeg8kDataset import CholecSeg8kDataset
 
 torch.manual_seed(1)
@@ -158,7 +158,7 @@ def hausdorff95_score_per_class(pred, gt, num_classes):
 # Boucle de test
 # ------------------------- #
 
-def test_model(model, test_loader, num_classes=9, device="xpu", save_results=False, results_dir="results"):
+def test_model(model, test_loader, num_classes=9, device="cuda" if torch.cuda.is_available() else ("xpu" if torch.xpu.is_available() else "cpu"), save_results=False, results_dir="results"):
     """
     Teste le modèle et calcule :
       - Des métriques globales par image,
@@ -174,10 +174,18 @@ def test_model(model, test_loader, num_classes=9, device="xpu", save_results=Fal
     model.eval()
 
     test_loss = 0
+    pre_crf_metrics_list = []  # for pre-CRF metrics
+    post_crf_metrics_list = []  # for post-CRF metrics
     global_metrics_list = []  # pour stocker les métriques globales moyennes par batch (afin de faire une moyenne globale)
     results_per_image = []    # liste de dictionnaires, chacun contenant les métriques pour une image
     # Pour l'agrégation par classe, on utilisera des dictionnaires listant les valeurs uniquement pour les images qui possèdent la classe
-    agg_metrics = {
+    agg_metrics_pre = {
+        "accuracy": {c: [] for c in range(num_classes)},
+        "dice": {c: [] for c in range(num_classes)},
+        "jaccard": {c: [] for c in range(num_classes)},
+        "hd95": {c: [] for c in range(num_classes)},
+    }
+    agg_metrics_post = {
         "accuracy": {c: [] for c in range(num_classes)},
         "dice": {c: [] for c in range(num_classes)},
         "jaccard": {c: [] for c in range(num_classes)},
@@ -198,107 +206,179 @@ def test_model(model, test_loader, num_classes=9, device="xpu", save_results=Fal
             memory_frames = images[:-1]
             memory_masks  = masks[:-1]
 
-            prediction = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
-            loss = criterion(prediction, current_mask.argmax(dim=1).long())
-            print(f"[{image_counter+1}/{len(test_loader)*len(prediction)}] Testing loss: {loss.item():.4f}")
+            outputs = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
+            
+            if model.use_crf:
+                pre_crf_pred, post_crf_pred = outputs
+                loss = criterion(post_crf_pred, current_mask.argmax(dim=1).long())
+            else:
+                post_crf_pred = outputs
+                loss = criterion(post_crf_pred, current_mask.argmax(dim=1).long())
+
+            print(f"[{image_counter+1}/{len(test_loader)*len(post_crf_pred)}] Testing loss: {loss.item():.4f}")
             test_loss += loss.item()
 
             # Conversion des masques en arrays numpy
-            pred_masks = prediction.argmax(dim=1).detach().cpu().numpy()  # forme: (batch, H, W)
-            target_masks = current_mask.argmax(dim=1).detach().cpu().numpy()  # forme: (batch, H, W)
+            target_masks = current_mask.argmax(dim=1).detach().cpu().numpy()
+            
+            if model.use_crf:
+                # Process pre-CRF results
+                pre_crf_masks = pre_crf_pred.argmax(dim=1).detach().cpu().numpy()
+            
+            # Process post-CRF results
+            post_crf_masks = post_crf_pred.argmax(dim=1).detach().cpu().numpy()
 
-            # Calcul pour chaque image du batch
-            for i in range(pred_masks.shape[0]):
+            # Calculate for each image in batch
+            for i in range(post_crf_masks.shape[0]):
                 image_counter += 1
-                # Calcul des métriques globales pour l'image
-                acc = accuracy_score(pred_masks[i], target_masks[i])
-                dice = dice_score_per_sample(pred_masks[i], target_masks[i], num_classes)
-                jaccard = jaccard_score_per_sample(pred_masks[i], target_masks[i], num_classes)
-                hd95 = hausdorff95_score_per_sample(pred_masks[i], target_masks[i], num_classes)
+                image_results = {"Image_Index": image_counter}
 
-                # Calcul des métriques par classe pour l'image
-                acc_pc = accuracy_score_per_class(pred_masks[i], target_masks[i], num_classes)
-                dice_pc = dice_score_per_class(pred_masks[i], target_masks[i], num_classes)
-                jaccard_pc = jaccard_score_per_class(pred_masks[i], target_masks[i], num_classes)
-                hd95_pc = hausdorff95_score_per_class(pred_masks[i], target_masks[i], num_classes)
+                if model.use_crf:
+                    # Pre-CRF metrics
+                    pre_acc = accuracy_score(pre_crf_masks[i], target_masks[i])
+                    pre_dice = dice_score_per_sample(pre_crf_masks[i], target_masks[i], num_classes)
+                    pre_jaccard = jaccard_score_per_sample(pre_crf_masks[i], target_masks[i], num_classes)
+                    pre_hd95 = hausdorff95_score_per_sample(pre_crf_masks[i], target_masks[i], num_classes)
+                
+                    image_results.update({
+                        "Pre_CRF_Accuracy": pre_acc,
+                        "Pre_CRF_Dice": pre_dice,
+                        "Pre_CRF_Jaccard": pre_jaccard,
+                        "Pre_CRF_Hd95": pre_hd95
+                    })
 
-                # Initialisation d'un dictionnaire pour stocker les résultats de cette image
-                image_results = {
-                    "Image_Index": image_counter,
-                    "Global_Accuracy": acc,
-                    "Global_Dice": dice,
-                    "Global_Jaccard": jaccard,
-                    "Global_Hd95": hd95
-                }
+                    for c in range(num_classes):
+                        if np.sum(target_masks[i] == c) > 0:
+                            acc_pc = accuracy_score_per_class(pre_crf_masks[i], target_masks[i], num_classes)[c]
+                            dice_pc = dice_score_per_class(pre_crf_masks[i], target_masks[i], num_classes)[c]
+                            jaccard_pc = jaccard_score_per_class(pre_crf_masks[i], target_masks[i], num_classes)[c]
+                            hd95_pc = hausdorff95_score_per_class(pre_crf_masks[i], target_masks[i], num_classes)[c]
 
-                # Pour chaque classe, on enregistre la métrique uniquement si la classe est présente dans le ground truth
+                            image_results.update({
+                                f"Pre_CRF_Accuracy_{class_names[c]}": acc_pc,
+                                f"Pre_CRF_Dice_{class_names[c]}": dice_pc,
+                                f"Pre_CRF_Jaccard_{class_names[c]}": jaccard_pc,
+                                f"Pre_CRF_Hd95_{class_names[c]}": hd95_pc
+                            })
+
+                            agg_metrics_pre["accuracy"][c].append(acc_pc)
+                            agg_metrics_pre["dice"][c].append(dice_pc)
+                            agg_metrics_pre["jaccard"][c].append(jaccard_pc)
+                            agg_metrics_pre["hd95"][c].append(hd95_pc)
+            
+                post_acc = accuracy_score(post_crf_masks[i], target_masks[i])
+                post_dice = dice_score_per_sample(post_crf_masks[i], target_masks[i], num_classes)
+                post_jaccard = jaccard_score_per_sample(post_crf_masks[i], target_masks[i], num_classes)
+                post_hd95 = hausdorff95_score_per_sample(post_crf_masks[i], target_masks[i], num_classes)
+                
+                image_results.update({
+                    "Post_CRF_Accuracy": post_acc,
+                    "Post_CRF_Dice": post_dice,
+                    "Post_CRF_Jaccard": post_jaccard,
+                    "Post_CRF_Hd95": post_hd95
+                })
+
                 for c in range(num_classes):
-                    # Vérifier si la classe c est présente dans le masque ground truth pour cette image
                     if np.sum(target_masks[i] == c) > 0:
-                        image_results[f"Accuracy_{class_names[c]}"] = acc_pc[c]
-                        image_results[f"Dice_{class_names[c]}"] = dice_pc[c]
-                        image_results[f"Jaccard_{class_names[c]}"] = jaccard_pc[c]
-                        image_results[f"Hd95_{class_names[c]}"] = hd95_pc[c]
-                        # Stockage pour l'agrégation finale par classe
-                        agg_metrics["accuracy"][c].append(acc_pc[c])
-                        agg_metrics["dice"][c].append(dice_pc[c])
-                        agg_metrics["jaccard"][c].append(jaccard_pc[c])
-                        agg_metrics["hd95"][c].append(hd95_pc[c])
-                    else:
-                        # La classe n'est pas présente : on peut noter la valeur comme NaN, ou tout simplement ne rien stocker pour l'image
-                        image_results[f"Accuracy_{class_names[c]}"] = np.nan
-                        image_results[f"Dice_{class_names[c]}"] = np.nan
-                        image_results[f"Jaccard_{class_names[c]}"] = np.nan
-                        image_results[f"Hd95_{class_names[c]}"] = np.nan
-
+                        acc_pc = accuracy_score_per_class(post_crf_masks[i], target_masks[i], num_classes)[c]
+                        dice_pc = dice_score_per_class(post_crf_masks[i], target_masks[i], num_classes)[c]
+                        jaccard_pc = jaccard_score_per_class(post_crf_masks[i], target_masks[i], num_classes)[c]
+                        hd95_pc = hausdorff95_score_per_class(post_crf_masks[i], target_masks[i], num_classes)[c]
+                        
+                        image_results.update({
+                            f"Post_CRF_Accuracy_{class_names[c]}": acc_pc,
+                            f"Post_CRF_Dice_{class_names[c]}": dice_pc,
+                            f"Post_CRF_Jaccard_{class_names[c]}": jaccard_pc,
+                            f"Post_CRF_Hd95_{class_names[c]}": hd95_pc
+                        })
+                        
+                        agg_metrics_post["accuracy"][c].append(acc_pc)
+                        agg_metrics_post["dice"][c].append(dice_pc)
+                        agg_metrics_post["jaccard"][c].append(jaccard_pc)
+                        agg_metrics_post["hd95"][c].append(hd95_pc)
+                
                 results_per_image.append(image_results)
 
-            # Nettoyage
-            del current_frame, current_mask, memory_frames, memory_masks, prediction, loss
-            torch.xpu.empty_cache()
+            del current_frame, current_mask, memory_frames, memory_masks, outputs, loss
+            if model.use_crf:
+                del pre_crf_pred, post_crf_pred
+            else:
+                del post_crf_pred
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif torch.xpu.is_available():
+                torch.xpu.empty_cache()
 
     avg_test_loss = test_loss / len(test_loader)
     print("------------------------------")
     print(f"Test Loss: {avg_test_loss:.4f}")
 
-    # Calcul des métriques globales moyennes sur toutes les images
-    all_global_acc = [d["Global_Accuracy"] for d in results_per_image]
-    all_global_dice = [d["Global_Dice"] for d in results_per_image]
-    all_global_jaccard = [d["Global_Jaccard"] for d in results_per_image]
-    all_global_hd95 = [d["Global_Hd95"] for d in results_per_image if np.isfinite(d["Global_Hd95"])]
+    if model.use_crf:
+        all_pre_acc = [d["Pre_CRF_Accuracy"] for d in results_per_image]
+        all_pre_dice = [d["Pre_CRF_Dice"] for d in results_per_image]
+        all_pre_jaccard = [d["Pre_CRF_Jaccard"] for d in results_per_image]
+        all_pre_hd95 = [d["Pre_CRF_Hd95"] for d in results_per_image if np.isfinite(d["Pre_CRF_Hd95"])]
 
-    avg_global_acc = np.mean(all_global_acc)
-    avg_global_dice = np.mean(all_global_dice)
-    avg_global_jaccard = np.mean(all_global_jaccard)
-    avg_global_hd95 = np.mean(all_global_hd95) if len(all_global_hd95) > 0 else np.inf
+        avg_pre_acc = np.mean(all_pre_acc)
+        avg_pre_dice = np.mean(all_pre_dice)
+        avg_pre_jaccard = np.mean(all_pre_jaccard)
+        avg_pre_hd95 = np.mean(all_pre_hd95) if len(all_pre_hd95) > 0 else np.inf
 
-    print(f"Global Accuracy: {avg_global_acc:.4f}")
-    print(f"Global Dice Coefficient: {avg_global_dice:.4f}")
-    print(f"Global Jaccard Index: {avg_global_jaccard:.4f}")
-    print(f"Global Hausdorff Distance 95: {avg_global_hd95:.4f}")
-    print("------------------------------")
+        print("Pre-CRF Metrics:")
+        print(f"Global Accuracy: {avg_pre_acc:.4f}")
+        print(f"Global Dice Coefficient: {avg_pre_dice:.4f}")
+        print(f"Global Jaccard Index: {avg_pre_jaccard:.4f}")
+        print(f"Global Hausdorff Distance 95: {avg_pre_hd95:.4f}")
+        print("------------------------------")
+
+    all_post_acc = [d["Post_CRF_Accuracy"] for d in results_per_image]
+    all_post_dice = [d["Post_CRF_Dice"] for d in results_per_image]
+    all_post_jaccard = [d["Post_CRF_Jaccard"] for d in results_per_image]
+    all_post_hd95 = [d["Post_CRF_Hd95"] for d in results_per_image if np.isfinite(d["Post_CRF_Hd95"])]
+
+    avg_post_acc = np.mean(all_post_acc)
+    avg_post_dice = np.mean(all_post_dice)
+    avg_post_jaccard = np.mean(all_post_jaccard)
+    avg_post_hd95 = np.mean(all_post_hd95) if len(all_post_hd95) > 0 else np.inf
+
+    print("Post-CRF Metrics:")
+    print(f"Global Accuracy: {avg_post_acc:.4f}")
+    print(f"Global Dice Coefficient: {avg_post_dice:.4f}")
+    print(f"Global Jaccard Index: {avg_post_jaccard:.4f}")
+    print(f"Global Hausdorff Distance 95: {avg_post_hd95:.4f}")
 
     # Calcul des moyennes par classe pour les images qui contiennent chacune la classe
-    avg_per_class = {}
+    avg_per_class_pre = {}
+    avg_per_class_post = {}
     for c in range(num_classes):
-        if agg_metrics["accuracy"][c]:
-            avg_per_class[class_names[c]] = {
-                "Accuracy": np.mean(agg_metrics["accuracy"][c]),
-                "Dice": np.mean(agg_metrics["dice"][c]),
-                "Jaccard": np.mean(agg_metrics["jaccard"][c]),
-                "Hd95": np.mean([v for v in agg_metrics["hd95"][c] if np.isfinite(v)]) if any(np.isfinite(agg_metrics["hd95"][c])) else np.inf
+        if model.use_crf and agg_metrics_pre["accuracy"][c]:
+            avg_per_class_pre[class_names[c]] = {
+                "Accuracy": np.mean(agg_metrics_pre["accuracy"][c]),
+                "Dice": np.mean(agg_metrics_pre["dice"][c]),
+                "Jaccard": np.mean(agg_metrics_pre["jaccard"][c]),
+                "Hd95": np.mean([v for v in agg_metrics_pre["hd95"][c] if np.isfinite(v)]) if any(np.isfinite(agg_metrics_pre["hd95"][c])) else np.inf
             }
-        else:
-            # Si aucune image ne contient cette classe
-            avg_per_class[class_names[c]] = {
-                "Accuracy": np.nan,
-                "Dice": np.nan,
-                "Jaccard": np.nan,
-                "Hd95": np.nan,
+        
+        if agg_metrics_post["accuracy"][c]:
+            avg_per_class_post[class_names[c]] = {
+                "Accuracy": np.mean(agg_metrics_post["accuracy"][c]),
+                "Dice": np.mean(agg_metrics_post["dice"][c]),
+                "Jaccard": np.mean(agg_metrics_post["jaccard"][c]),
+                "Hd95": np.mean([v for v in agg_metrics_post["hd95"][c] if np.isfinite(v)]) if any(np.isfinite(agg_metrics_post["hd95"][c])) else np.inf
             }
 
-    print("Métriques moyennes par classe (seulement sur les images possédant la classe) :")
-    for cl, metrics in avg_per_class.items():
+    if model.use_crf:
+        print("Pre-CRF Metrics per class:")
+        for cl, metrics in avg_per_class_pre.items():
+            print(f"{cl}:")
+            print(f"   Accuracy: {metrics['Accuracy']:.4f}")
+            print(f"   Dice Coefficient: {metrics['Dice']:.4f}")
+            print(f"   Jaccard Index: {metrics['Jaccard']:.4f}")
+            print(f"   Hausdorff Distance 95: {metrics['Hd95']:.4f}")
+        print("------------------------------")
+
+    print("Post-CRF Metrics per class:")
+    for cl, metrics in avg_per_class_post.items():
         print(f"{cl}:")
         print(f"   Accuracy: {metrics['Accuracy']:.4f}")
         print(f"   Dice Coefficient: {metrics['Dice']:.4f}")
@@ -378,7 +458,7 @@ if __name__ == '__main__':
     # HemoSet Dataset
 
     # dataset_2 = HemoSetDataset(
-    #     data_dir=r"D:\HemoSet\hemoset_tensors",
+    #     data_dir=r"D:\College\Research\SLU\laparoscopic surgery\Dataset\HemoSet",
     #     history_length=4,
     #     augment=False
     # )
@@ -396,7 +476,7 @@ if __name__ == '__main__':
     #         files = seq[0]
     #     else:
     #         files = seq
-    #     video_id = int(os.path.basename(files[0]).split('_')[0])
+    #     video_id = files[0]["pig_id"]
     #     if video_id in train_vids_2:
     #         train_indices_2.append(idx)
     #     elif video_id in val_vids_2:
@@ -458,7 +538,7 @@ if __name__ == '__main__':
         use_crf=True
     )
 
-    model_dir = r"D:\College\Research\SLU\laparoscopic surgery\LaparoSeg\best_model_checkpoint.pth"
+    model_dir = r"D:\College\Research\SLU\laparoscopic surgery\LaparoSeg\DSAD_CRF_ON_best_model_checkpoint.pth"
     checkpoint = torch.load(model_dir)
     model.load_state_dict(checkpoint["model_state_dict"])
 
@@ -466,7 +546,7 @@ if __name__ == '__main__':
         model=model,
         test_loader=test_loader,
         num_classes=8,
-        device="xpu",
+        device="cuda" if torch.cuda.is_available() else ("xpu" if torch.xpu.is_available() else "cpu"),
         save_results=True,
         results_dir="results"
     )
