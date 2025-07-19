@@ -54,7 +54,7 @@ class MemoryBank:
         # If empty memory
         if len(self.bank) == 0:
             # Return a tensor of zeros
-            return torch.zeros((batch_size, self.max_frames, channels, height, width), device='xpu', requires_grad=True)
+            return torch.zeros((batch_size, self.max_frames, channels, height, width), device="cuda" if torch.cuda.is_available() else ("xpu" if torch.xpu.is_available() else "cpu"), requires_grad=True)
         
         memory = torch.stack(self.bank, dim=1)  # Shape: (batch_size, len(self.bank), channels, height, width)
         

@@ -538,7 +538,7 @@ if __name__ == '__main__':
         use_crf=True
     )
 
-    model_dir = r"D:\College\Research\SLU\laparoscopic surgery\LaparoSeg\DSAD_CRF_ON_best_model_checkpoint.pth"
+    model_dir = r"D:\College\Research\SLU\laparoscopic surgery\LaparoSeg\HemoSet_best_model_checkpoint.pth"
     checkpoint = torch.load(model_dir)
     model.load_state_dict(checkpoint["model_state_dict"])
 
