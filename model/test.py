@@ -14,7 +14,7 @@ from torch.utils.data import Dataset, ConcatDataset, DataLoader, Subset, random_
 from DMBMSNet import DMBMSNet
 from DresdenDataset import DresdenDataset
 from HemoSetDataset import HemoSetDataset
-# from CholecSeg8kDataset import CholecSeg8kDataset
+from CholecSeg8kDataset import CholecSeg8kDataset
 
 torch.manual_seed(1)
 cudnn.benchmark = True
@@ -206,7 +206,7 @@ def test_model(model, test_loader, num_classes=9, device="cuda" if torch.cuda.is
             memory_frames = images[:-1]
             memory_masks  = masks[:-1]
 
-            outputs = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
+            outputs = model(current_frame, training=False, memory_frames=memory_frames, memory_masks=memory_masks)
             
             if model.use_crf:
                 pre_crf_pred, post_crf_pred = outputs
@@ -424,81 +424,81 @@ if __name__ == '__main__':
 
     # Dresden Dataset
 
-    dataset_1 = DresdenDataset(
-        data_dir=r"D:\College\Research\SLU\laparoscopic surgery\Dataset\DSAD\multilabel",
-        history_length=4,
-        augment=False
-    )
-
-    train_vids_1 = {4, 5, 8, 10, 12, 16, 17, 22, 23, 24, 25, 27, 29, 30, 31}
-    val_vids_1   = {2, 7, 11, 18, 20}
-    test_vids_1  = {3, 21, 26}
-
-    train_indices_1 = []
-    val_indices_1 = []
-    test_indices_1 = []
-
-    for idx, seq in enumerate(dataset_1.sequences):
-        if isinstance(seq, tuple):
-            files = seq[0]
-        else:
-            files = seq
-        video_id = files[0]["surgery_id"]
-        if video_id in train_vids_1:
-            train_indices_1.append(idx)
-        elif video_id in val_vids_1:
-            val_indices_1.append(idx)
-        elif video_id in test_vids_1:
-            test_indices_1.append(idx)
-
-    train_set_1 = Subset(dataset_1, train_indices_1)
-    val_set_1 = Subset(dataset_1, val_indices_1)
-    test_set_1 = Subset(dataset_1, test_indices_1)
-
-    # HemoSet Dataset
-
-    # dataset_2 = HemoSetDataset(
-    #     data_dir=r"D:\College\Research\SLU\laparoscopic surgery\Dataset\HemoSet",
+    # dataset_1 = DresdenDataset(
+    #     data_dir=r"D:\College\Research\SLU\laparoscopic surgery\Dataset\DSAD\multilabel",
     #     history_length=4,
     #     augment=False
     # )
 
-    # train_vids_2 = {1, 2, 3, 4, 5, 6}
-    # val_vids_2 = {7, 9}
-    # test_vids_2 = {10, 11}
+    # train_vids_1 = {4, 5, 8, 10, 12, 16, 17, 22, 23, 24, 25, 27, 29, 30, 31}
+    # val_vids_1   = {2, 7, 11, 18, 20}
+    # test_vids_1  = {3, 21, 26}
 
-    # train_indices_2 = []
-    # val_indices_2 = []
-    # test_indices_2 = []
+    # train_indices_1 = []
+    # val_indices_1 = []
+    # test_indices_1 = []
 
-    # for idx, seq in enumerate(dataset_2.sequences):
+    # for idx, seq in enumerate(dataset_1.sequences):
     #     if isinstance(seq, tuple):
     #         files = seq[0]
     #     else:
     #         files = seq
-    #     video_id = files[0]["pig_id"]
-    #     if video_id in train_vids_2:
-    #         train_indices_2.append(idx)
-    #     elif video_id in val_vids_2:
-    #         val_indices_2.append(idx)
-    #     elif video_id in test_vids_2:
-    #         test_indices_2.append(idx)
+    #     video_id = files[0]["surgery_id"]
+    #     if video_id in train_vids_1:
+    #         train_indices_1.append(idx)
+    #     elif video_id in val_vids_1:
+    #         val_indices_1.append(idx)
+    #     elif video_id in test_vids_1:
+    #         test_indices_1.append(idx)
 
-    # train_set_2 = Subset(dataset_2, train_indices_2)
-    # val_set_2 = Subset(dataset_2, val_indices_2)
-    # test_set_2 = Subset(dataset_2, test_indices_2)
+    # train_set_1 = Subset(dataset_1, train_indices_1)
+    # val_set_1 = Subset(dataset_1, val_indices_1)
+    # test_set_1 = Subset(dataset_1, test_indices_1)
 
-    # # CholecSeg8k Dataset
+    # HemoSet Dataset
+
+    dataset_2 = HemoSetDataset(
+        data_dir=r"D:\College\Research\SLU\laparoscopic surgery\Dataset\HemoSet",
+        history_length=4,
+        augment=False
+    )
+
+    train_vids_2 = {1, 2, 3, 4, 5, 6}
+    val_vids_2 = {7, 9}
+    test_vids_2 = {10, 11}
+
+    train_indices_2 = []
+    val_indices_2 = []
+    test_indices_2 = []
+
+    for idx, seq in enumerate(dataset_2.sequences):
+        if isinstance(seq, tuple):
+            files = seq[0]
+        else:
+            files = seq
+        video_id = files[0]["pig_id"]
+        if video_id in train_vids_2:
+            train_indices_2.append(idx)
+        elif video_id in val_vids_2:
+            val_indices_2.append(idx)
+        elif video_id in test_vids_2:
+            test_indices_2.append(idx)
+
+    train_set_2 = Subset(dataset_2, train_indices_2)
+    val_set_2 = Subset(dataset_2, val_indices_2)
+    test_set_2 = Subset(dataset_2, test_indices_2)
+
+    # CholecSeg8k Dataset
 
     # dataset_3 = CholecSeg8kDataset(
-    #     data_dir=r"D:\CholecSeg8k\cholecseg8k_tensors",
-    #     history_length=4,
+    #     data_dir=r"D:\College\Research\SLU\laparoscopic surgery\Dataset\CholecSeg8k",
+    #     history_length=0,
     #     augment=False
     # )
 
-    # train_vids_3 = {}
-    # val_vids_3 = {}
-    # test_vids_3 = {1, 9, 12, 17, 18, 20, 24, 25, 26, 27, 28, 35, 37, 43, 48, 52, 55}
+    # train_vids_3 = {1, 9, 12, 17, 18, 20, 24, 25, 26, 27, 28}
+    # val_vids_3 = {35, 37, 43}
+    # test_vids_3 = {48, 52, 55}
 
     # train_indices_3 = []
     # val_indices_3 = []
@@ -509,7 +509,7 @@ if __name__ == '__main__':
     #         files = seq[0]
     #     else:
     #         files = seq
-    #     video_id = int(os.path.basename(files[0]).split('_')[0])
+    #     video_id = files[0]["video_id"]
     #     if video_id in train_vids_3:
     #         train_indices_3.append(idx)
     #     elif video_id in val_vids_3:
@@ -522,12 +522,12 @@ if __name__ == '__main__':
     # test_set_3 = Subset(dataset_3, test_indices_3)
 
     # Concaténation des datasets de test
-    test_set = ConcatDataset([test_set_1])
+    test_set = ConcatDataset([test_set_2])
     test_loader = DataLoader(test_set, batch_size=2, shuffle=True, num_workers=4)
 
     model = DMBMSNet(
         input_dim=3,
-        num_classes=8,
+        num_classes=2,
         num_encoder_blocks=5,
         base_dim=64,
         num_heads=8,
@@ -538,14 +538,14 @@ if __name__ == '__main__':
         use_crf=True
     )
 
-    model_dir = r"D:\College\Research\SLU\laparoscopic surgery\LaparoSeg\HemoSet_best_model_checkpoint.pth"
+    model_dir = r"D:\College\Research\SLU\laparoscopic surgery\LaparoSeg\Hemo_Two_Channel_best_model_checkpoint.pth"
     checkpoint = torch.load(model_dir)
     model.load_state_dict(checkpoint["model_state_dict"])
 
     test_model(
         model=model,
         test_loader=test_loader,
-        num_classes=8,
+        num_classes=2,
         device="cuda" if torch.cuda.is_available() else ("xpu" if torch.xpu.is_available() else "cpu"),
         save_results=True,
         results_dir="results"

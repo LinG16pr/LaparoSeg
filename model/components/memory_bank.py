@@ -28,7 +28,7 @@ class MemoryBank:
         Args:
             frame (torch.Tensor): Frame with dimensions [batch_size, 1024, height/16, width/16].
         """
-        if len(self.bank) >= self.max_frames:
+        if len(self.bank) >= self.max_frames and len(self.bank) != 0:
             self.bank.pop(0)  # Delete the oldest frame
         self.bank.append(frame)  # Add the new frame
 

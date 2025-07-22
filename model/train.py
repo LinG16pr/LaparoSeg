@@ -20,7 +20,7 @@ from torch.utils.data import Dataset, ConcatDataset, DataLoader, Subset, random_
 from DMBMSNet import DMBMSNet
 from DresdenDataset import DresdenDataset
 from HemoSetDataset import HemoSetDataset
-# from CholecSeg8kDataset import CholecSeg8kDataset
+from CholecSeg8kDataset import CholecSeg8kDataset
 
 torch.manual_seed(1)
 cudnn.benchmark = True
@@ -179,6 +179,7 @@ def train_model(
     train_loss_history = []
     val_loss_history = []
     if resume_Training:
+        clear_torch_cache()
         try:
             checkpoint = torch.load(checkpoint_path)
             model.load_state_dict(checkpoint['model_state_dict'])
@@ -188,10 +189,10 @@ def train_model(
             epochs_counter = checkpoint['epoch'] + 1
             train_loss_history = checkpoint.get('train_loss_history', [])
             val_loss_history = checkpoint.get('val_loss_history', [])
-            print(f"✅ Loaded latest checkpoint from epoch {start_epoch-1}, val_loss={avg_test_loss:.4f}")
+            print(f"✅ Loaded latest checkpoint from epoch {start_epoch}, val_loss={avg_test_loss:.4f}")
         except Exception as e:
             print(f"⚠️ Cannot load checkpoint: {e}, training from scratch")
-            
+
     for epoch in range(start_epoch, num_epochs):
         epochs_counter += 1
         model.train()
@@ -391,60 +392,60 @@ if __name__ == '__main__':
     args = parse_args()
 
     # Model arguments
-    num_classes        = 8 #args.num_classes
+    num_classes        = 13 #args.num_classes
     num_encoder_blocks = 5 #args.num_encoder_blocks
     num_heads          = 8 #args.num_heads
     k                  = 5 #args.k
-    memory_length      = 0 #args.memory_length
+    memory_length      = 4 #args.memory_length
     num_memory_blocks  = 4 #args.num_memory_blocks
     deformable         = True #args.deformable
     use_crf            = True #args.use_crf
 
     # Training arguments
-    data_dir           = r"D:\College\Research\SLU\laparoscopic surgery\Dataset\DSAD\multilabel" #args.data_dir
+    data_dir           = r"D:\College\Research\SLU\laparoscopic surgery\Dataset\CholecSeg8k" #args.data_dir
     augmentation       = False #args.augmentation
     batch_size         = 2 #args.batch_size
     epochs             = 1000 #args.epochs
-    lr                 = 1e-5 #args.lr
+    lr                 = 1e-3 #args.lr
     patience           = 6 #args.patience
     device             = "cuda" if torch.cuda.is_available() else ("xpu" if torch.xpu.is_available() else "cpu") #args.device
 
     # Dresden Dataset
 
-    dataset_1 = DresdenDataset(
-        data_dir,
-        history_length = memory_length,
-        augment = augmentation
-    )
+    # dataset_1 = DresdenDataset(
+    #     data_dir,
+    #     history_length = memory_length,
+    #     augment = augmentation
+    # )
     
-    train_vids_1 = {4, 5, 8, 10, 12, 16, 17, 22, 23, 24, 25, 27, 29, 30, 31}
-    val_vids_1   = {2, 7, 11, 18, 20}
-    test_vids_1  = {3, 21, 26}
-    #train_vids_1 = {4, 5, 8, 10, 12, 16, 17, 22, 23, 24, 25, 27, 29, 30, 31, 3, 21, 26}
-    #val_vids_1   = {2, 7, 11, 18, 20}
-    #test_vids_1  = {}
+    # train_vids_1 = {4, 5, 8, 10, 12, 16, 17, 22, 23, 24, 25, 27, 29, 30, 31}
+    # val_vids_1   = {2, 7, 11, 18, 20}
+    # test_vids_1  = {3, 21, 26}
+    # #train_vids_1 = {4, 5, 8, 10, 12, 16, 17, 22, 23, 24, 25, 27, 29, 30, 31, 3, 21, 26}
+    # #val_vids_1   = {2, 7, 11, 18, 20}
+    # #test_vids_1  = {}
 
-    train_indices_1 = []
-    val_indices_1   = []
-    test_indices_1  = []
+    # train_indices_1 = []
+    # val_indices_1   = []
+    # test_indices_1  = []
 
-    for idx, seq in enumerate(dataset_1.sequences):
-        # Chaque séquence est soit une liste de fichiers, soit un tuple (liste de fichiers, type d'augmentation)
-        if isinstance(seq, tuple):
-            files = seq[0]
-        else:
-            files = seq
-        video_id = files[0]["surgery_id"]
-        if video_id in train_vids_1:
-            train_indices_1.append(idx)
-        elif video_id in val_vids_1:
-            val_indices_1.append(idx)
-        elif video_id in test_vids_1:
-            test_indices_1.append(idx)
+    # for idx, seq in enumerate(dataset_1.sequences):
+    #     # Chaque séquence est soit une liste de fichiers, soit un tuple (liste de fichiers, type d'augmentation)
+    #     if isinstance(seq, tuple):
+    #         files = seq[0]
+    #     else:
+    #         files = seq
+    #     video_id = files[0]["surgery_id"]
+    #     if video_id in train_vids_1:
+    #         train_indices_1.append(idx)
+    #     elif video_id in val_vids_1:
+    #         val_indices_1.append(idx)
+    #     elif video_id in test_vids_1:
+    #         test_indices_1.append(idx)
 
-    train_set_1 = Subset(dataset_1, train_indices_1)
-    val_set_1   = Subset(dataset_1, val_indices_1)
-    test_set_1  = Subset(dataset_1, test_indices_1)
+    # train_set_1 = Subset(dataset_1, train_indices_1)
+    # val_set_1   = Subset(dataset_1, val_indices_1)
+    # test_set_1  = Subset(dataset_1, test_indices_1)
 
     # HemoSet Dataset
 
@@ -485,47 +486,47 @@ if __name__ == '__main__':
 
     # CholecSeg8k Dataset
 
-    # dataset_3 = CholecSeg8kDataset(
-    #     data_dir = r"D:\CholecSeg8k\cholecseg8k_tensors",
-    #     history_length = memory_length,
-    #     augment = augmentation
-    # )
+    dataset_3 = CholecSeg8kDataset(
+        data_dir = r"D:\College\Research\SLU\laparoscopic surgery\Dataset\CholecSeg8k",
+        history_length = memory_length,
+        augment = augmentation
+    )
 
-    # train_vids_3 = {1, 9, 12, 17, 18, 20, 24, 25, 26, 27, 28}
-    # val_vids_3 = {35, 37, 43}
-    # test_vids_3 = {48, 52, 55}
-    # #train_vids_3 = {}
-    # #val_vids_3 = {}
-    # #test_vids_3 = {1, 9, 12, 17, 18, 20, 24, 25, 26, 27, 28, 35, 37, 43, 48, 52, 55}
+    train_vids_3 = {1, 9, 12, 17, 18, 20, 24, 25, 26, 27, 28}
+    val_vids_3 = {35, 37, 43}
+    test_vids_3 = {48, 52, 55}
+    #train_vids_3 = {}
+    #val_vids_3 = {}
+    #test_vids_3 = {1, 9, 12, 17, 18, 20, 24, 25, 26, 27, 28, 35, 37, 43, 48, 52, 55}
 
-    # train_indices_3 = []
-    # val_indices_3   = []
-    # test_indices_3  = []
+    train_indices_3 = []
+    val_indices_3   = []
+    test_indices_3  = []
 
-    # for idx, seq in enumerate(dataset_3.sequences):
-    #     # Chaque séquence est soit une liste de fichiers, soit un tuple (liste de fichiers, type d'augmentation)
-    #     if isinstance(seq, tuple):
-    #         files = seq[0]
-    #     else:
-    #         files = seq
-    #     # On récupère l’ID vidéo depuis le nom du premier fichier de la séquence
-    #     video_id = int(os.path.basename(files[0]).split('_')[0])
-    #     if video_id in train_vids_3:
-    #         train_indices_3.append(idx)
-    #     elif video_id in val_vids_3:
-    #         val_indices_3.append(idx)
-    #     elif video_id in test_vids_3:
-    #         test_indices_3.append(idx)
+    for idx, seq in enumerate(dataset_3.sequences):
+        # Chaque séquence est soit une liste de fichiers, soit un tuple (liste de fichiers, type d'augmentation)
+        if isinstance(seq, tuple):
+            files = seq[0]
+        else:
+            files = seq
+        # On récupère l’ID vidéo depuis le nom du premier fichier de la séquence
+        video_id = files[0]["video_id"]
+        if video_id in train_vids_3:
+            train_indices_3.append(idx)
+        elif video_id in val_vids_3:
+            val_indices_3.append(idx)
+        elif video_id in test_vids_3:
+            test_indices_3.append(idx)
 
-    # train_set_3 = Subset(dataset_3, train_indices_3)
-    # val_set_3   = Subset(dataset_3, val_indices_3)
-    # test_set_3  = Subset(dataset_3, test_indices_3)
+    train_set_3 = Subset(dataset_3, train_indices_3)
+    val_set_3   = Subset(dataset_3, val_indices_3)
+    test_set_3  = Subset(dataset_3, test_indices_3)
 
     #
 
-    train_set = ConcatDataset([train_set_1])
-    val_set = ConcatDataset([val_set_1])
-    test_set = ConcatDataset([test_set_1])
+    train_set = ConcatDataset([train_set_3])
+    val_set = ConcatDataset([val_set_3])
+    test_set = ConcatDataset([test_set_3])
 
     # Create DataLoaders
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4)
