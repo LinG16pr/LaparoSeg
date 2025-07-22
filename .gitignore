@@ -185,3 +185,6 @@ results
 
 # Experimenting with HemoSet Samples
 test_HemoSet.py
+
+# Experimenting with CholecSeg8k Samples
+test_CholecSeg.py

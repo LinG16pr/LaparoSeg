@@ -158,6 +158,6 @@ class DMBMSNet(nn.Module):
             new_memory = self.memory_encoder(post_crf_masks, encoder_output)
             self.memory_bank.add(new_memory)
 
-        if self.use_crf:
-            return pre_crf_masks, post_crf_masks
+        # if self.use_crf:
+        #     return pre_crf_masks, post_crf_masks
         return post_crf_masks
