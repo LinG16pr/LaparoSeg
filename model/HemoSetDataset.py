@@ -19,7 +19,8 @@ class HemoSetDataset(Dataset):
         data_dir,
         history_length=4,
         augment=True,
-        img_size=(80, 80)
+        img_size=(80, 80),
+        skip_rate=0
     ):
         """
         Initializes the HemoSet Dataset from a given path to HemoSet's folder. 
@@ -33,11 +34,16 @@ class HemoSetDataset(Dataset):
                              Default True. 
         :param tuple img_size: Image output size (H in pixels, W in pixels)
                                Default (80, 80)
+        :param int skip_rate: How many frames to skip between sequences.
+                              skip_rate=0 gives consecutive sequences (1234, 2345, 3456)
+                              skip_rate=1 gives sequences spaced by 1 (1357, 2468, 3579)
+                              Default 0.
         """
         self.data_dir = data_dir
         self.history_length = history_length
         self.augment = augment
         self.img_size = img_size
+        self.skip_rate = skip_rate
         self.transform = transforms.Compose([
             transforms.Resize(img_size),
             transforms.ToTensor()
@@ -111,29 +117,18 @@ class HemoSetDataset(Dataset):
         return video_dict
 
     def _generate_sequences(self):
-        """
-        Generating training sequences, considering the continuity of frames. 
-        """
         sequences = []
-
-        for frame_info in self.video_frames.values():
-            # Eliminate pigs with frames less than history_length
-            if len(frame_info) < self.history_length + 1:
+        for pig_id, frame_info in self.video_frames.items():
+            seq_span = self.history_length * (self.skip_rate + 1)
+            
+            if len(frame_info) < seq_span:
                 continue
 
-            for i in range(self.history_length, len(frame_info)):
-                # Combine every history_length frames as a sequence
-                original_seq = frame_info[i-self.history_length:i+1]
-                sequences.append(original_seq)
-                if self.augment:
-                    # Augmentations with duplication
-                    if random.random() < 0.20:  # 20% chance for rotation
-                        sequences.append((original_seq, "rotate"))
-                    elif random.random() < 0.35:  # 15% chance for brightness/contrast
-                        sequences.append((original_seq, "brightness_contrast"))
-                    elif random.random() < 0.45:  # 10% chance for Gaussian noise
-                        sequences.append((original_seq, "gaussian_noise"))
-
+            for start_idx in range(0, len(frame_info) - seq_span + 1):
+                sequence = frame_info[start_idx : start_idx + seq_span : (self.skip_rate + 1)]
+                assert len(sequence) == self.history_length, \
+                    f"Sequence length incorrect. Expected: {self.history_length}, actual: {len(sequence)}"
+                sequences.append(sequence)
         return sequences
 
     def _apply_augmentation(
@@ -196,6 +191,10 @@ class HemoSetDataset(Dataset):
         Returns frames and masks
         """
         sequence_info = self.sequences[idx]
+        frames = torch.zeros((self.history_length, 3, *self.img_size))
+        masks = torch.zeros((self.history_length, 2, *self.img_size))
+
+
         augmentation_type = None
 
         if isinstance(sequence_info, tuple):
@@ -208,10 +207,10 @@ class HemoSetDataset(Dataset):
 
         for frame_info in sequence:
             img = Image.open(frame_info["image_path"]).convert("RGB")
-            img = self.transform(img)
+            img = self.transform(img).clone().detach()
 
             mask = self._load_masks(frame_info["mask_path"])
-            mask = TF.resize(mask, self.img_size)
+            mask = TF.resize(mask, self.img_size).clone().detach()
 
             frames.append(img)
             masks.append(mask)
@@ -224,4 +223,7 @@ class HemoSetDataset(Dataset):
             )
 
         assert masks[0].shape[0] == 2, f"Mask should be 2-channel, got {masks[0].shape}"
+        frames = torch.stack(frames, dim=0)  # shape: [history_length, C, H, W]
+        masks = torch.stack(masks, dim=0)    # shape: [history_length, num_classes, H, W]
+
         return frames, masks

@@ -132,16 +132,20 @@ def hausdorff95_score_per_sample(pred, gt, num_classes):
         return np.inf
     return np.mean(finite_scores)
 
-def freeze_model_except_crf(model):
-    for param in model.parameters():
-        param.requires_grad = True
-    
+def freeze_except_crf(model):
     for name, param in model.named_parameters():
-        if not name.startswith("last_layer"):
+        if "hierarchical_dense_crf" not in name:
             param.requires_grad = False
-    
-    for name, param in model.named_parameters():
+        else:
+            param.requires_grad = True
         print(f"{name}: {'trainable' if param.requires_grad else 'freeze'}")
+
+def reset_crf(model):
+    for m in model.hierarchical_dense_crf.modules():
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
 
 # ------------------------- #
 # Boucle d'entraînement et évaluation
@@ -156,11 +160,20 @@ def train_model(
     num_epochs = 20,
     lr = 1e-5,
     patience = 4,
-    device = "cuda" if torch.cuda.is_available() else ("xpu" if torch.xpu.is_available() else "cpu")
+    device = "cuda" if torch.cuda.is_available() else ("xpu" if torch.xpu.is_available() else "cpu"),
+    mode = "full"
 ):
-    
     model = model.to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=lr)
+    if mode == "crf_only":
+        freeze_except_crf(model)
+        reset_crf(model)
+        optimizer = torch.optim.Adam(
+            filter(lambda p: p.requires_grad, model.parameters()),
+            lr=lr * 100
+        )
+    else:
+        optimizer = optim.AdamW(model.parameters(), lr=lr)
+
     criterion = nn.CrossEntropyLoss()
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
@@ -212,40 +225,33 @@ def train_model(
     
             images = [img.squeeze(1).to(device) for img in images]
             masks  = [mask.squeeze(1).to(device) for mask in masks]
+            optimizer.zero_grad()
             
             current_frame = images[-1]
             current_mask  = masks[-1]
             memory_frames = images[:-1]
             memory_masks  = masks[:-1]
 
-            optimizer.zero_grad()
-
             try:
-                prediction = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
-                if isinstance(prediction, tuple):
-                    _, prediction = prediction
+                _, prediction = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
                 loss = criterion(prediction, current_mask.argmax(dim=1).long())
                 print(f"[{epochs_counter}/{num_epochs}] [{images_counter}/{len(train_loader)}] Training loss: {loss}")
 
                 if torch.isnan(loss).any():
                     print(f"⚠️ NaN loss detected during training at epoch n°{epoch+1}, batch n°{images_counter}.")
                     nan_detected = True
-                    optimizer.zero_grad()
                     break
 
                 loss.backward()
                 optimizer.step()
                 #scheduler.step()
                 total_loss += loss.item()
-                del prediction, loss
-                clear_torch_cache()
             except RuntimeError as e:
                 print(f"⚠️ RuntimeError occured at {epoch+1}, batch {images_counter}. Attempting to recover...")
-                optimizer.zero_grad()
                 clear_torch_cache()
                 raise e
 
-            del current_frame, current_mask, memory_frames, memory_masks
+            del current_frame, current_mask, memory_frames, memory_masks, prediction, loss
             clear_torch_cache()
 
         avg_train_loss = total_loss / len(train_loader)
@@ -266,9 +272,7 @@ def train_model(
                 memory_masks  = masks[:-1]
 
                 try:
-                    prediction = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
-                    if isinstance(prediction, tuple):
-                        _, prediction = prediction
+                    _, prediction = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
                     loss = criterion(prediction, current_mask.argmax(dim=1).long())
                     print(f"[{epochs_counter}/{num_epochs}] [{images_counter}/{len(val_loader)}] Validation loss: {loss}")
 
@@ -355,9 +359,7 @@ def train_model(
                 memory_frames = images[:-1]
                 memory_masks  = masks[:-1]
 
-                prediction = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
-                if isinstance(prediction, tuple):
-                    _, prediction = prediction
+                _, prediction = model(current_frame, training=True, memory_frames=memory_frames, memory_masks=memory_masks)
                 loss = criterion(prediction, current_mask.argmax(dim=1).long())
                 test_loss += loss.item()
 
@@ -415,17 +417,17 @@ if __name__ == '__main__':
     num_encoder_blocks = 5 #args.num_encoder_blocks
     num_heads          = 8 #args.num_heads
     k                  = 5 #args.k
-    memory_length      = 3 #args.memory_length
+    memory_length      = 4 #args.memory_length
     num_memory_blocks  = 4 #args.num_memory_blocks
     deformable         = True #args.deformable
-    use_crf            = False #args.use_crf
+    use_crf            = True #args.use_crf
 
     # Training arguments
     data_dir           = r"D:\College\Research\SLU\laparoscopic surgery\Dataset\HemoSet" #args.data_dir
     augmentation       = False #args.augmentation
     batch_size         = 2 #args.batch_size
     epochs             = 1000 #args.epochs
-    lr                 = 1e-3 #args.lr
+    lr                 = 1e-2 #args.lr
     patience           = 6 #args.patience
     device             = "cuda" if torch.cuda.is_available() else ("xpu" if torch.xpu.is_available() else "cpu") #args.device
 
@@ -471,8 +473,7 @@ if __name__ == '__main__':
     dataset_2 = HemoSetDataset(
         data_dir = r"D:\College\Research\SLU\laparoscopic surgery\Dataset\HemoSet",
         history_length = memory_length,
-        augment = augmentation,
-        skip_rate=1
+        augment = augmentation
     )
 
     train_vids_2 = {1, 2, 3, 4, 5, 6}
@@ -553,7 +554,6 @@ if __name__ == '__main__':
     val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=True, num_workers=4)
     test_loader  = DataLoader(test_set,  batch_size=batch_size, shuffle=True, num_workers=4)
 
-    # Model Initialization
     model = DMBMSNet(
         input_dim          = 3,
         num_classes        = num_classes,
@@ -567,6 +567,9 @@ if __name__ == '__main__':
         use_crf            = use_crf
     )
 
+    checkpoint = torch.load("D:\College\Research\SLU\laparoscopic surgery\LaparoSeg\Hemo_Two_Channel_best_model_checkpoint.pth")
+    model.load_state_dict(checkpoint["model_state_dict"])
+
     train_model(
         model        = model,
         train_loader = train_loader,
@@ -576,5 +579,6 @@ if __name__ == '__main__':
         num_epochs   = epochs,
         lr           = lr,
         patience     = patience,
-        device       = device
+        device       = device,
+        mode="crf_only"
     )

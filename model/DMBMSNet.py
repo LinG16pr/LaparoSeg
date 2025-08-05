@@ -101,6 +101,9 @@ class DMBMSNet(nn.Module):
         # STEP 0: Verify inputs
         #
 
+        if training:
+            self.memory_bank.clear()
+
         # STEP 1: Pass through ImageEncoder
 
         encoder_output, skip_connections = self.image_encoder(x)
@@ -158,6 +161,6 @@ class DMBMSNet(nn.Module):
             new_memory = self.memory_encoder(post_crf_masks, encoder_output)
             self.memory_bank.add(new_memory)
 
-        # if self.use_crf:
-        #     return pre_crf_masks, post_crf_masks
+        if self.use_crf:
+            return pre_crf_masks, post_crf_masks
         return post_crf_masks

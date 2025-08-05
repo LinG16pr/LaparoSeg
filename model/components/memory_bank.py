@@ -66,3 +66,6 @@ class MemoryBank:
             memory = torch.cat([padding, memory], dim=1) # Final shape: (batch_size, max_frames, C, H, W)
 
         return memory
+    
+    def clear(self):
+        self.bank = []
