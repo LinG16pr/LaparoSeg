@@ -179,12 +179,8 @@ cython_debug/
 
 # Experimenting with DSAD Samples
 processDSADSamples
-test_DSAD.py
 notes.md
 results
 
-# Experimenting with HemoSet Samples
-test_HemoSet.py
-
-# Experimenting with CholecSeg8k Samples
-test_CholecSeg.py
+DSAD_results
+CholecSeg_results

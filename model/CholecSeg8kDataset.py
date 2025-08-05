@@ -192,3 +192,5 @@ class CholecSeg8kDataset(Dataset):
             frames, masks = self._apply_augmentation(frames, masks, augmentation_type)
         
         return frames, masks
+    
+    

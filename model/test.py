@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import warnings
 import os
+import seaborn as sns
 
 # PyTorch imports
 import torch
@@ -174,9 +175,6 @@ def test_model(model, test_loader, num_classes=9, device="cuda" if torch.cuda.is
     model.eval()
 
     test_loss = 0
-    pre_crf_metrics_list = []  # for pre-CRF metrics
-    post_crf_metrics_list = []  # for post-CRF metrics
-    global_metrics_list = []  # pour stocker les métriques globales moyennes par batch (afin de faire une moyenne globale)
     results_per_image = []    # liste de dictionnaires, chacun contenant les métriques pour une image
     # Pour l'agrégation par classe, on utilisera des dictionnaires listant les valeurs uniquement pour les images qui possèdent la classe
     agg_metrics_pre = {
@@ -313,22 +311,26 @@ def test_model(model, test_loader, num_classes=9, device="cuda" if torch.cuda.is
     print("------------------------------")
     print(f"Test Loss: {avg_test_loss:.4f}")
 
+    # Calculate global metrics
+    global_metrics = {}
     if model.use_crf:
         all_pre_acc = [d["Pre_CRF_Accuracy"] for d in results_per_image]
         all_pre_dice = [d["Pre_CRF_Dice"] for d in results_per_image]
         all_pre_jaccard = [d["Pre_CRF_Jaccard"] for d in results_per_image]
         all_pre_hd95 = [d["Pre_CRF_Hd95"] for d in results_per_image if np.isfinite(d["Pre_CRF_Hd95"])]
 
-        avg_pre_acc = np.mean(all_pre_acc)
-        avg_pre_dice = np.mean(all_pre_dice)
-        avg_pre_jaccard = np.mean(all_pre_jaccard)
-        avg_pre_hd95 = np.mean(all_pre_hd95) if len(all_pre_hd95) > 0 else np.inf
+        global_metrics["pre_crf"] = {
+            "accuracy": np.mean(all_pre_acc),
+            "dice": np.mean(all_pre_dice),
+            "jaccard": np.mean(all_pre_jaccard),
+            "hd95": np.mean(all_pre_hd95) if len(all_pre_hd95) > 0 else np.inf
+        }
 
         print("Pre-CRF Metrics:")
-        print(f"Global Accuracy: {avg_pre_acc:.4f}")
-        print(f"Global Dice Coefficient: {avg_pre_dice:.4f}")
-        print(f"Global Jaccard Index: {avg_pre_jaccard:.4f}")
-        print(f"Global Hausdorff Distance 95: {avg_pre_hd95:.4f}")
+        print(f"Global Accuracy: {global_metrics['pre_crf']['accuracy']:.4f}")
+        print(f"Global Dice Coefficient: {global_metrics['pre_crf']['dice']:.4f}")
+        print(f"Global Jaccard Index: {global_metrics['pre_crf']['jaccard']:.4f}")
+        print(f"Global Hausdorff Distance 95: {global_metrics['pre_crf']['hd95']:.4f}")
         print("------------------------------")
 
     all_post_acc = [d["Post_CRF_Accuracy"] for d in results_per_image]
@@ -336,16 +338,19 @@ def test_model(model, test_loader, num_classes=9, device="cuda" if torch.cuda.is
     all_post_jaccard = [d["Post_CRF_Jaccard"] for d in results_per_image]
     all_post_hd95 = [d["Post_CRF_Hd95"] for d in results_per_image if np.isfinite(d["Post_CRF_Hd95"])]
 
-    avg_post_acc = np.mean(all_post_acc)
-    avg_post_dice = np.mean(all_post_dice)
-    avg_post_jaccard = np.mean(all_post_jaccard)
-    avg_post_hd95 = np.mean(all_post_hd95) if len(all_post_hd95) > 0 else np.inf
-
+    global_metrics["post_crf"] = {
+        "accuracy": np.mean(all_post_acc),
+        "dice": np.mean(all_post_dice),
+        "jaccard": np.mean(all_post_jaccard),
+        "hd95": np.mean(all_post_hd95) if len(all_post_hd95) > 0 else np.inf
+    }
     print("Post-CRF Metrics:")
-    print(f"Global Accuracy: {avg_post_acc:.4f}")
-    print(f"Global Dice Coefficient: {avg_post_dice:.4f}")
-    print(f"Global Jaccard Index: {avg_post_jaccard:.4f}")
-    print(f"Global Hausdorff Distance 95: {avg_post_hd95:.4f}")
+    print(f"Global Accuracy: {global_metrics['post_crf']['accuracy']:.4f}")
+    print(f"Global Dice Coefficient: {global_metrics['post_crf']['dice']:.4f}")
+    print(f"Global Jaccard Index: {global_metrics['post_crf']['jaccard']:.4f}")
+    print(f"Global Hausdorff Distance 95: {global_metrics['post_crf']['hd95']:.4f}")
+    print("------------------------------")
+
 
     # Calcul des moyennes par classe pour les images qui contiennent chacune la classe
     avg_per_class_pre = {}
@@ -384,39 +389,127 @@ def test_model(model, test_loader, num_classes=9, device="cuda" if torch.cuda.is
         print(f"   Dice Coefficient: {metrics['Dice']:.4f}")
         print(f"   Jaccard Index: {metrics['Jaccard']:.4f}")
         print(f"   Hausdorff Distance 95: {metrics['Hd95']:.4f}")
+    print("------------------------------")
 
     # Sauvegarde des résultats dans des fichiers CSV si demandé
     if save_results:
-        # Résultats par image
+        viz_dir = os.path.join(results_dir, "visualizations")
+        os.makedirs(viz_dir, exist_ok=True)
+        
         df_images = pd.DataFrame(results_per_image)
         df_images.to_csv(os.path.join(results_dir, "per_image_metrics.csv"), index=False)
         print(f"Résultats par image sauvegardés dans {os.path.join(results_dir, 'per_image_metrics.csv')}")
-
-        # Agrégation globale
-        global_results = {
-            "Test_Loss": avg_test_loss,
-            "Global_Accuracy": avg_global_acc,
-            "Global_Dice": avg_global_dice,
-            "Global_Jaccard": avg_global_jaccard,
-            "Global_Hd95": avg_global_hd95
+        
+        global_data = {
+            "test_loss": [avg_test_loss]
         }
-        # On peut sauvegarder également les métriques moyennes par classe
-        df_global = pd.DataFrame(global_results, index=[0])
-        df_class = pd.DataFrame(avg_per_class).transpose().reset_index().rename(columns={"index": "Classe"})
+        
+        if model.use_crf:
+            global_data.update({
+                "pre_crf_accuracy": [global_metrics['pre_crf']['accuracy']],
+                "pre_crf_dice": [global_metrics['pre_crf']['dice']],
+                "pre_crf_jaccard": [global_metrics['pre_crf']['jaccard']],
+                "pre_crf_hd95": [global_metrics['pre_crf']['hd95']]
+            })
+        
+        global_data.update({
+            "post_crf_accuracy": [global_metrics['post_crf']['accuracy']],
+            "post_crf_dice": [global_metrics['post_crf']['dice']],
+            "post_crf_jaccard": [global_metrics['post_crf']['jaccard']],
+            "post_crf_hd95": [global_metrics['post_crf']['hd95']]
+        })
+        
+        df_global = pd.DataFrame(global_data)
         df_global.to_csv(os.path.join(results_dir, "global_metrics.csv"), index=False)
+        
+        class_data = []
+        for class_name in class_names:
+            if model.use_crf and class_name in avg_per_class_pre:
+                class_data.append({
+                    "Class": class_name,
+                    "Type": "Pre-CRF",
+                    "Accuracy": avg_per_class_pre[class_name]["Accuracy"],
+                    "Dice": avg_per_class_pre[class_name]["Dice"],
+                    "Jaccard": avg_per_class_pre[class_name]["Jaccard"],
+                    "Hd95": avg_per_class_pre[class_name]["Hd95"]
+                })
+            
+            if class_name in avg_per_class_post:
+                class_data.append({
+                    "Class": class_name,
+                    "Type": "Post-CRF",
+                    "Accuracy": avg_per_class_post[class_name]["Accuracy"],
+                    "Dice": avg_per_class_post[class_name]["Dice"],
+                    "Jaccard": avg_per_class_post[class_name]["Jaccard"],
+                    "Hd95": avg_per_class_post[class_name]["Hd95"]
+                })
+        
+        df_class = pd.DataFrame(class_data)
         df_class.to_csv(os.path.join(results_dir, "per_class_metrics.csv"), index=False)
+        
         print(f"Résultats globaux sauvegardés dans {results_dir}")
+        
+        import matplotlib.pyplot as plt
+        
+        metrics_to_plot = ['Accuracy', 'Dice', 'Jaccard', 'Hd95']
+        for metric in metrics_to_plot:
+            plt.figure(figsize=(10, 6))
+            
+            if model.use_crf:
+                pre_values = [d[f"Pre_CRF_{metric}"] for d in results_per_image]
+                plt.hist(pre_values, bins=20, alpha=0.5, label='Pre-CRF')
+            
+            post_values = [d[f"Post_CRF_{metric}"] for d in results_per_image]
+            plt.hist(post_values, bins=20, alpha=0.5, label='Post-CRF')
+            
+            plt.title(f'Distribution of {metric} Scores')
+            plt.xlabel(metric)
+            plt.ylabel('Number of Images')
+            plt.legend()
+            plt.grid(True)
+            
+            if metric == 'Hd95':
+                plt.xlim(0, np.percentile([v for v in post_values if np.isfinite(v)], 95))
+            
+            plt.savefig(os.path.join(viz_dir, f'{metric.lower()}_distribution.png'))
+            plt.close()
+        
+        for class_name in class_names:
+            for metric in metrics_to_plot:
+                plt.figure(figsize=(10, 6))
+                
+                if model.use_crf:
+                    pre_values = [d[f"Pre_CRF_{metric}"] for d in results_per_image]
+                    pre_values = [v for v in pre_values if np.isfinite(v) and not np.isnan(v)]
+                    if pre_values:
+                        plt.hist(pre_values, bins=20, alpha=0.5, label='Pre-CRF')
+                
+                post_values = [d.get(f"Post_CRF_{metric}_{class_name}", np.nan) for d in results_per_image]
+                post_values = [v for v in post_values if np.isfinite(v) and not np.isnan(v)]
+                if post_values:
+                    plt.hist(post_values, bins=20, alpha=0.5, label='Post-CRF')
+                
+                if (model.use_crf and pre_values) or post_values:
+                    plt.title(f'Distribution of {metric} Scores for {class_name}')
+                    plt.xlabel(metric)
+                    plt.ylabel('Number of Images')
+                    plt.legend()
+                    plt.grid(True)
+                    
+                    if metric == 'Hd95':
+                        finite_values = [v for v in post_values if np.isfinite(v)]
+                        if finite_values:
+                            plt.xlim(0, np.percentile(finite_values, 95))
+                    
+                    plt.savefig(os.path.join(viz_dir, f'{class_name.lower().replace(" ", "_")}_{metric.lower()}_distribution.png'))
+                    plt.close()
 
     return {
-        "global": {
-            "loss": avg_test_loss,
-            "accuracy": avg_global_acc,
-            "dice": avg_global_dice,
-            "jaccard": avg_global_jaccard,
-            "hd95": avg_global_hd95,
-        },
-        "per_class": avg_per_class,
-        "per_image": results_per_image
+        "test_loss": avg_test_loss,
+        "global_metrics": global_metrics,
+        "per_class_pre_crf": avg_per_class_pre if model.use_crf else None,
+        "per_class_post_crf": avg_per_class_post,
+        "per_image_metrics": results_per_image
     }
 
 
@@ -459,8 +552,9 @@ if __name__ == '__main__':
 
     dataset_2 = HemoSetDataset(
         data_dir=r"D:\College\Research\SLU\laparoscopic surgery\Dataset\HemoSet",
-        history_length=4,
-        augment=False
+        history_length=3,
+        augment=False,
+        skip_rate=5
     )
 
     train_vids_2 = {1, 2, 3, 4, 5, 6}
@@ -492,7 +586,7 @@ if __name__ == '__main__':
 
     # dataset_3 = CholecSeg8kDataset(
     #     data_dir=r"D:\College\Research\SLU\laparoscopic surgery\Dataset\CholecSeg8k",
-    #     history_length=0,
+    #     history_length=4,
     #     augment=False
     # )
 
@@ -538,7 +632,7 @@ if __name__ == '__main__':
         use_crf=True
     )
 
-    model_dir = r"D:\College\Research\SLU\laparoscopic surgery\LaparoSeg\Hemo_Two_Channel_best_model_checkpoint.pth"
+    model_dir = r"D:\College\Research\SLU\laparoscopic surgery\LaparoSeg\Hemo_Memory_3_Skip_Rate_0_CRF_best_model_checkpoint.pth"
     checkpoint = torch.load(model_dir)
     model.load_state_dict(checkpoint["model_state_dict"])
 
